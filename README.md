@@ -116,11 +116,31 @@ python "$RUSDA/tools/verify-patch.py" dist-android
 
 魔改不是银弹。当前补丁清的是最常被查的那批指纹，但二进制里还留着更深的痕迹：server / inject 里大量 `Frida*` 类型名、编译期源码路径、内嵌 JS 里的 `frida:rpc`、默认端口 `27042/27052`（运行时行为，不是字符串）等。对付一般检测够用，对付重度加固 App 的深度内存扫描不一定够。要更彻底得继续往里抠，建议配真机验证再改，免得把 gadget 改崩。
 
+## 真机测试
+
+17.15.0 在 Pixel 6 Pro（arm64，已 root）上实测：spawn / attach 注入、Interceptor hook、读目标内存均正常，`frida -U` 直接可用。
+
+拿一套反检测检测器（Sentry v1.3，native 层做端口 / 内存 / CRC 校验）跑了一遍：
+
+- **线程名、内存特征、maps detection、ptrace、调试器、Xposed 这些默认就过** —— 靠的是上面那套魔改，不用额外操作。
+- 只有 **Frida Ports / SO Code Integrity** 两项跟 frida 的**默认端口 27042** 有关（它在默认端口上做 D-Bus 指纹探测）。`rusda-server` 换个自定义端口跑，两项一并通过，全部 PASS：
+
+```bash
+# 起服务时指定一个非默认端口（只监听本地）
+adb shell su -c '/data/local/tmp/rusda-server -l 127.0.0.1:8765'
+# 客户端走 USB，不依赖监听端口
+frida -U -f 包名
+```
+
+> `SO Code Integrity` 的 CRC/GOT 部分是真·反 hook 检测——server 空跑时没注入目标、没改它的代码，所以判「干净」；真去 hook 目标里它校验的函数，这项可能翻回 FAIL，那是 hook 实现层面的对抗，跟换端口是两码事。
+>
+> Enforcing 的设备上，frida-server 自带的 SELinux 适配在部分内核打不上，agent 通信会被挡，需要 `setenforce 0`（官方 frida 同样，非 rusda 问题）。
+
 ## 目录结构
 
 ```
 rusda/
-├── 16.2.1/  16.7.19/  17.6.2/  17.14.1/    # 按版本分目录
+├── 16.2.1/ 16.7.19/ 17.6.2/ 17.14.1/ 17.15.0/   # 按版本分目录
 │   ├── patches/deliver/                    # superrepo / frida-core / frida-gum 补丁 + README
 │   └── tools/                              # build-android-all.sh、verify-patch.py
 └── README.md
